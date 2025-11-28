@@ -37,8 +37,8 @@ end = "2024-04-01"
 # Initialize df and df_returns
 df = pd.DataFrame()
 for asset in assets:
-    raw = yf.download(asset, start=start, end=end, auto_adjust = False)
-    df[asset] = raw['Adj Close']
+    raw = yf.download(asset, start=start, end=end, auto_adjust=False)
+    df[asset] = raw["Adj Close"]
 
 df_returns = df.pct_change().fillna(0)
 
@@ -62,7 +62,12 @@ class EqualWeightPortfolio:
         """
         TODO: Complete Task 1 Below
         """
-
+        n_assets = len(assets)
+        if n_assets > 0:
+            equal_weight = 1.0 / n_assets
+            # assign equal weight to all investable assets for all dates
+            self.portfolio_weights.loc[:, assets] = equal_weight
+        # excluded column (e.g. SPY) stays NaN and becomes 0 after fillna
         """
         TODO: Complete Task 1 Above
         """
@@ -113,9 +118,32 @@ class RiskParityPortfolio:
         """
         TODO: Complete Task 2 Below
         """
+        # start once we have enough history
+        for i in range(self.lookback + 1, len(df)):
+            # rolling window of returns for the investable assets
+            R_win = df_returns[assets].iloc[i - self.lookback : i]
 
+            # volatility (std) for each asset in the window
+            sigma = R_win.std()
 
+            # guard against zero vol
+            sigma_replaced = sigma.replace(0, np.nan)
 
+            inv_sigma = 1.0 / sigma_replaced
+            # if all NaN (degenerate case), skip this date
+            if inv_sigma.isna().all():
+                continue
+
+            inv_sigma = inv_sigma.fillna(0)
+            total = inv_sigma.sum()
+            if total == 0:
+                continue
+
+            weights = inv_sigma / total
+
+            # assign weights for this date
+            self.portfolio_weights.loc[df.index[i], assets] = weights.values
+        # excluded asset stays NaN and will become 0 after fillna
         """
         TODO: Complete Task 2 Above
         """
@@ -187,35 +215,35 @@ class MeanVariancePortfolio:
                 """
                 TODO: Complete Task 3 Below
                 """
+                # decision variable: long-only with upper bound 1
+                w = model.addMVar(n, name="w", lb=0.0, ub=1.0)
 
-                # Sample Code: Initialize Decision w and the Objective
-                # NOTE: You can modify the following code
-                w = model.addMVar(n, name="w", ub=1)
-                model.setObjective(w.sum(), gp.GRB.MAXIMIZE)
+                # fully invested constraint: sum of weights = 1
+                model.addConstr(w.sum() == 1.0, name="budget")
 
+                # mean-variance objective:
+                # maximize mu^T w - (gamma / 2) * w^T Sigma w
+                exp_ret = mu @ w
+                risk = w @ Sigma @ w
+                obj = exp_ret - 0.5 * gamma * risk
+
+                model.setObjective(obj, gp.GRB.MAXIMIZE)
                 """
                 TODO: Complete Task 3 Above
                 """
                 model.optimize()
 
-                # Check if the status is INF_OR_UNBD (code 4)
                 if model.status == gp.GRB.INF_OR_UNBD:
                     print(
                         "Model status is INF_OR_UNBD. Reoptimizing with DualReductions set to 0."
                     )
                 elif model.status == gp.GRB.INFEASIBLE:
-                    # Handle infeasible model
                     print("Model is infeasible.")
-                elif model.status == gp.GRB.INF_OR_UNBD:
-                    # Handle infeasible or unbounded model
-                    print("Model is infeasible or unbounded.")
-
                 if model.status == gp.GRB.OPTIMAL or model.status == gp.GRB.SUBOPTIMAL:
                     # Extract the solution
                     solution = []
                     for i in range(n):
                         var = model.getVarByName(f"w[{i}]")
-                        # print(f"w {i} = {var.X}")
                         solution.append(var.X)
 
         return solution
@@ -277,6 +305,6 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     judge = AssignmentJudge()
-    
+
     # All grading logic is protected in grader.py
     judge.run_grading(args)
